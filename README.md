@@ -61,6 +61,11 @@ On video:
 ``` shell
 python inference.py --weights_kp "SV_kp" --weights_line "SV_lines" --input_path "examples/iniesta_sample.mp4" --input_type "video" --display
 ```
+To filter keypoints based on stability on video:
+
+``` shell
+python stable_keypoint_detect.py --video Test29.mov --weights_kp SV_kp --weights_line SV_lines --output test29_memory_output.mp4 --frame_skip 1 --show_confidence --show_stability --enable_memory
+```
 
 On image:
 ``` shell

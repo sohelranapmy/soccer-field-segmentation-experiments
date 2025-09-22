@@ -19,14 +19,14 @@ from utils.utils_heatmap import get_keypoints_from_heatmap_batch_maxpool, get_ke
 
 
 class KeypointStabilityAnalyzer:
-    def __init__(self, window_size=50,min_stability=0.3):
+    def __init__(self, window_size=100,min_stability=0.3):
         self.detection_history = {}
         self.window_size = window_size
         self.min_stability = min_stability
         self.stability_scores = {}
         
     def update_detection_history(self, frame_keypoints):
-        for kp_id in range(1, 31):
+        for kp_id in range(1, 58):
             if kp_id not in self.detection_history:
                 self.detection_history[kp_id] = []
             
@@ -245,7 +245,7 @@ def draw_keypoints_on_frame(frame, keypoints_dict, show_confidence=True, min_con
     if memory_system and show_stability:
         memory_system.stability_analyzer.calculate_stability_scores()
         stability_scores = memory_system.stability_analyzer.stability_scores
-        stable_anchors = memory_system.stability_analyzer.get_adaptive_anchors(keypoints_dict)
+        # stable_anchors = memory_system.stability_analyzer.get_adaptive_anchors(keypoints_dict)
     
     for kp_id, kp_data in keypoints_dict.items():
         if 'x' in kp_data and 'y' in kp_data:
@@ -258,12 +258,12 @@ def draw_keypoints_on_frame(frame, keypoints_dict, show_confidence=True, min_con
             
             # Get stability score for this keypoint
             stability_score = 0.0
-            is_stable_anchor = kp_id in stable_anchors
+            # is_stable_anchor = kp_id in stable_anchors
             if kp_id in stability_scores:
                 stability_score = stability_scores[kp_id]['overall']
             
             # Color based on stability if showing stability, otherwise confidence
-            if show_stability and kp_id in stability_scores:
+            if show_stability:# and kp_id in stability_scores:
                 # Color based on stability: red (low) -> yellow -> green (high)
                 if stability_score < 0.3:
                     color = (0, 0, 255)  # Red for low stability
@@ -273,8 +273,8 @@ def draw_keypoints_on_frame(frame, keypoints_dict, show_confidence=True, min_con
                     color = (0, 255, 0)  # Green for high stability
                 
                 # Special color for stable anchors
-                if is_stable_anchor:
-                    color = (255, 0, 255)  # Magenta for stable anchors
+                # if is_stable_anchor:
+                #     color = (255, 255, 255)  # Magenta for stable anchors
             else:
                 # Color based on confidence: red (low) -> yellow -> green (high)
                 if confidence < 0.3:
@@ -289,9 +289,9 @@ def draw_keypoints_on_frame(frame, keypoints_dict, show_confidence=True, min_con
             thickness = max(1, int(1 + confidence * 2))
             
             # Larger radius for stable anchors
-            if is_stable_anchor:
-                radius += 2
-                thickness += 1
+            # if is_stable_anchor:
+            #     radius += 2
+            #     thickness += 1
             
             # Draw circle for keypoint
             cv2.circle(frame_with_kp, (x, y), radius, color, thickness)
@@ -299,14 +299,16 @@ def draw_keypoints_on_frame(frame, keypoints_dict, show_confidence=True, min_con
             # Draw keypoint ID, confidence, and stability info
             if show_confidence or show_stability:
                 if show_stability:
-                    if kp_id in stability_scores:
-                        # Full stability score available
-                        if is_stable_anchor:
-                            label = f"{kp_id}:C{confidence:.2f}|S{stability_score:.2f}*"
-                        else:
-                            label = f"{kp_id}:C{confidence:.2f}|S{stability_score:.2f}"
+                    label = f"{kp_id}:C{confidence:.2f}|S{stability_score:.2f}"
+                    # if kp_id in stability_scores:
+                    #     # Full stability score available
+                    #     if is_stable_anchor:
+                    #         label = f"{kp_id}:C{confidence:.2f}|S{stability_score:.2f}*"
+                    #     else:
+                    #         label = f"{kp_id}:C{confidence:.2f}|S{stability_score:.2f}"
+
                     # else:
-                    #     label = f"{kp_id}:C{confidence:.2f}|S?"
+                    #     label = f"{kp_id}:C{confidence:.2f}|S{stability_score:.2f}"
                     # else:
                     #     # Fallback for keypoints without enough history or not in stability_scores
                     #     if memory_system and kp_id in memory_system.stability_analyzer.detection_history:
@@ -436,9 +438,8 @@ def create_keypoint_video(video_path, weights_kp, weights_line, output_path,
     out = cv2.VideoWriter(output_path, fourcc, output_fps, (frame_width, frame_height))
     
     # Initialize heatmap accumulator if needed
-    if show_heatmap:
-        accumulated_heatmap = np.zeros((frame_height, frame_width), dtype=np.float32)
-    
+    # if show_heatmap:
+    #     accumulated_heatmap = np.zeros((frame_height, frame_width), dtype=np.float32)
     # Initialize memory system if enabled
     memory_system = AdaptiveRelativeMemory() if use_memory_system else None
     
@@ -471,26 +472,26 @@ def create_keypoint_video(video_path, weights_kp, weights_line, output_path,
                 output_frame = frame.copy()
                 
                 # Add keypoints to accumulated heatmap
-                if show_heatmap:
-                    for kp_id, kp_data in keypoints_dict.items():
-                        if 'x' in kp_data and 'y' in kp_data:
-                            x, y = int(kp_data['x']), int(kp_data['y'])
-                            if 0 <= x < frame_width and 0 <= y < frame_height:
-                                # Add Gaussian blob
-                                y_coords, x_coords = np.ogrid[:frame_height, :frame_width]
-                                gaussian = np.exp(-((x_coords - x)**2 + (y_coords - y)**2) / (2 * heatmap_sigma**2))
-                                accumulated_heatmap += gaussian
+                # if show_heatmap:
+                #     for kp_id, kp_data in keypoints_dict.items():
+                #         if 'x' in kp_data and 'y' in kp_data:
+                #             x, y = int(kp_data['x']), int(kp_data['y'])
+                #             if 0 <= x < frame_width and 0 <= y < frame_height:
+                #                 # Add Gaussian blob
+                #                 y_coords, x_coords = np.ogrid[:frame_height, :frame_width]
+                #                 gaussian = np.exp(-((x_coords - x)**2 + (y_coords - y)**2) / (2 * heatmap_sigma**2))
+                #                 accumulated_heatmap += gaussian
                     
-                    # Create heatmap overlay
-                    heatmap_overlay, alpha_mask = create_accumulated_heatmap_overlay(
-                        accumulated_heatmap, frame.shape
-                    )
+                #     # Create heatmap overlay
+                #     heatmap_overlay, alpha_mask = create_accumulated_heatmap_overlay(
+                #         accumulated_heatmap, frame.shape
+                #     )
                     
-                    # Blend heatmap with frame
-                    output_frame = output_frame.astype(np.float32)
-                    heatmap_overlay = heatmap_overlay.astype(np.float32)
-                    output_frame = output_frame * (1 - alpha_mask) + heatmap_overlay * alpha_mask
-                    output_frame = np.clip(output_frame, 0, 255).astype(np.uint8)
+                #     # Blend heatmap with frame
+                #     output_frame = output_frame.astype(np.float32)
+                #     heatmap_overlay = heatmap_overlay.astype(np.float32)
+                #     output_frame = output_frame * (1 - alpha_mask) + heatmap_overlay * alpha_mask
+                #     output_frame = np.clip(output_frame, 0, 255).astype(np.uint8)
                 
                 # Draw current frame keypoints
                 if show_keypoints:
@@ -503,30 +504,30 @@ def create_keypoint_video(video_path, weights_kp, weights_line, output_path,
                     max_confidence = max(confidences) if confidences else 0.0
                     
                     # Add memory system info with detailed stability statistics
-                    if memory_system:
-                        memory_system.stability_analyzer.calculate_stability_scores()
-                        stable_anchors = memory_system.stability_analyzer.get_adaptive_anchors(keypoints_dict)
-                        stability_scores = memory_system.stability_analyzer.stability_scores
+                    # if memory_system:
+                    #     memory_system.stability_analyzer.calculate_stability_scores()
+                    #     stable_anchors = memory_system.stability_analyzer.get_adaptive_anchors(keypoints_dict)
+                    #     stability_scores = memory_system.stability_analyzer.stability_scores
                         
-                        # Calculate average stability score for detected keypoints
-                        detected_stabilities = [stability_scores[kp_id]['overall'] 
-                                              for kp_id in keypoints_dict.keys() 
-                                              if kp_id in stability_scores]
-                        avg_stability = np.mean(detected_stabilities) if detected_stabilities else 0.0
+                    #     # Calculate average stability score for detected keypoints
+                    #     detected_stabilities = [stability_scores[kp_id]['overall'] 
+                    #                           for kp_id in keypoints_dict.keys() 
+                    #                           if kp_id in stability_scores]
+                    #     avg_stability = np.mean(detected_stabilities) if detected_stabilities else 0.0
                         
-                        stability_info = f", Anchors: {len(stable_anchors)}, Avg Stab: {avg_stability:.3f}"
-                    else:
-                        stability_info = ""
+                    #     stability_info = f", Anchors: {len(stable_anchors)}, Avg Stab: {avg_stability:.3f}"
+                    # else:
+                    #     stability_info = ""
                     
-                    info_text = f"Frame: {processed_count+1}, KPs: {len(keypoints_dict)}, Avg Conf: {avg_confidence:.3f}, Max: {max_confidence:.3f}{stability_info}"
-                else:
-                    info_text = f"Frame: {processed_count+1}, Keypoints: 0"
+                    # info_text = f"Frame: {processed_count+1}, KPs: {len(keypoints_dict)}, Avg Conf: {avg_confidence:.3f}, Max: {max_confidence:.3f}{stability_info}"
+                # else:
+                #     info_text = f"Frame: {processed_count+1}, Keypoints: 0"
                 
                 # Background for text readability
-                text_size = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-                cv2.rectangle(output_frame, (5, 5), (15 + text_size[0], 35), (0, 0, 0), -1)
-                cv2.putText(output_frame, info_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 
-                           0.6, (255, 255, 255), 2)
+                # text_size = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                # cv2.rectangle(output_frame, (5, 5), (15 + text_size[0], 35), (0, 0, 0), -1)
+                # cv2.putText(output_frame, info_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                #            0.6, (255, 255, 255), 2)
                 
                 # Write frame
                 out.write(output_frame)
@@ -561,15 +562,12 @@ def main():
     parser.add_argument("--frame_skip", type=int, default=1, help="Process every nth frame")
     parser.add_argument("--kp_threshold", type=float, default=0.1486, help="Keypoint threshold")
     parser.add_argument("--line_threshold", type=float, default=0.3880, help="Line threshold")
-    parser.add_argument("--device", type=str, default="cuda:0", help="Device for inference")
-    parser.add_argument("--mode", type=str, choices=['heatmap', 'trails', 'keypoints'], default='heatmap',
-                       help="Visualization mode: heatmap (accumulated), trails, or keypoints only")
-    parser.add_argument("--trail_length", type=int, default=30, help="Trail length for trails mode")
+
     parser.add_argument("--heatmap_sigma", type=float, default=15, help="Gaussian sigma for heatmap")
     parser.add_argument("--show_confidence", action='store_true', default=True, help="Show confidence scores")
     parser.add_argument("--min_confidence", type=float, default=0.0, help="Minimum confidence threshold for display")
     parser.add_argument("--hide_confidence", action='store_true', help="Hide confidence scores (show only IDs)")
-    parser.add_argument("--disable_memory", action='store_true', help="Disable adaptive relative memory system")
+    parser.add_argument("--enable_memory", action='store_true', help="Disable adaptive relative memory system")
     parser.add_argument("--show_stability", action='store_true', help="Show stability scores and highlight stable anchors")
     parser.add_argument("--max_frames", type=int, default=None, help="Maximum number of frames to process (None for all frames)")
     
@@ -581,17 +579,19 @@ def main():
     
     try:
         global device
-        device = args.device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # device = args.device
         
         show_conf = args.show_confidence and not args.hide_confidence
-        use_memory = not args.disable_memory
+        use_memory = args.enable_memory
         show_stab = args.show_stability
         
 
         create_keypoint_video(
             args.video, args.weights_kp, args.weights_line, args.output,
             args.frame_skip, args.kp_threshold, args.line_threshold, 
-            args.device, show_heatmap=False, show_keypoints=True,
+            device, show_heatmap=False, show_keypoints=True,
             show_confidence=show_conf, min_confidence=args.min_confidence,
             use_memory_system=use_memory, show_stability=show_stab, max_frames=args.max_frames
         )
