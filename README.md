@@ -73,6 +73,7 @@ python inference.py --weights_kp "SV_kp" --weights_line "SV_lines" --input_path 
 ```
 <hr>
 
+
 ## Experiments
 ### Datasets
 #### SoccerNet-Calibration-V3:
@@ -99,6 +100,16 @@ Download the [TS-WorldCup](https://cgv.cs.nthu.edu.tw/KpSFR_data/TS-WorldCup.zip
 
 <hr>
 
+## Training (Experimenting)
+1. Download soccerNet (i.e. calibration-2023) dataset:
+2. Extract gaussian heatmaps of soccernet dataset for all keypoints:
+   ```shell
+    python generate_soccernet_heatmaps.py --dataset_root='/home/training-machine/Documents/brighton-project/soccer_net_data/calibration-2023' --sigma=7
+   ```
+3. Set the train_image_dir,train_mask_dir,val_image_dir,val_mask_dir
+    ```shell
+    python train.py
+    ```
 ### Metrics
 #### Segment Reprojection Error
 See https://github.com/SoccerNet/sn-calibration for details on the evaluation metric.
