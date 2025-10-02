@@ -100,6 +100,46 @@ Download the [TS-WorldCup](https://cgv.cs.nthu.edu.tw/KpSFR_data/TS-WorldCup.zip
 
 <hr>
 
+## Training on Brighton Data
+
+### Preprocessing:
+
+    Dataset folder structure:
+
+    soccer-field-segmentation-experiments
+    ├── brighton_data
+    │   ├── train
+    │   └── valid
+        └── test
+        
+    Generate keypoints heatmaps using following command:
+
+    ```shell
+    python generate_brighton_classwise_heatmaps.py --sigma 5 --sigma 6.0 --rescale_size 960x540
+    ```
+    It will produce [train,test,valid]_rescaled_images and [train,test,valid]_rescaled_images_heatmaps folders
+
+### Training
+    Inside training script (i.e. train_classwise.py) set the following paths: train_image_dir,train_mask_dir,val_image_dir,val_mask_dir
+
+    ```shell
+    python train_classiwise.py
+    ```
+    
+### Inferening
+
+    ```shell 
+    python inference_classwise.py \
+        --model_path hrnet_best_model_without_absent_panelty.pth \
+        --input_path /home/training-machine/Documents/brighton-project/video-intelligence/memory/video/input/test_2.mp4 \ 
+        --max_frames 1000 \
+        --fps_limit 1 \
+        --detection_threshold 0.05 \
+        --classification_threshold 0.01 \
+        --show_heatmap \
+        --heatmap_layout bottom \
+        --output_dir test_overlay
+    ```
 ## Training (Experimenting)
 1. Download soccerNet (i.e. calibration-2023) dataset:
 2. Extract gaussian heatmaps of soccernet dataset for all keypoints:

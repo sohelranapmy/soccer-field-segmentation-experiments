@@ -1,0 +1,6 @@
+**/brighton_data/
+*.mp4
+*.pth
+**/visalisation_with_classess_without_absent_panelty/
+**/visualisation/
+**/visualisation_without_class/

@@ -13,54 +13,43 @@ import argparse
 from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
 # Add project root to path
 sys.path.append('/home/training-machine/Documents/brighton-project/No-Bells-Just-Whistles')
 
 from utils.utils_heatmap import generate_gaussian_array_vectorized
 
-def extract_keypoints_from_soccernet_annotations(annotations, target_size=(960, 540)):
-    """Extract keypoints from SoccerNet line annotations"""
+def extract_lines_from_soccernet_annotations(annotations, target_size=(960, 540)):
+    """Extract line segments from SoccerNet line annotations"""
     w, h = target_size
-    keypoints = {}
-    kp_id = 1
+    lines = {}
+    line_id = 1
     
-    # Extract all points from line annotations
+    # Extract line segments from annotations
     for annotation_key, points in annotations.items():
-        if isinstance(points, list) and len(points) > 0:
-            for i, point in enumerate(points):
-                if isinstance(point, dict) and 'x' in point and 'y' in point:
-                    # Convert normalized coordinates to pixel coordinates
-                    x_pixel = point['x'] * w
-                    y_pixel = point['y'] * h
-                    
-                    # Include all points (even slightly outside frame for close_to_frame)
-                    margin = 15
-                    if -margin <= x_pixel <= w + margin and -margin <= y_pixel <= h + margin:
-                        keypoints[kp_id] = {
-                            'x': x_pixel,
-                            'y': y_pixel,
-                            'in_frame': (0 <= x_pixel <= w and 0 <= y_pixel <= h),
-                            'close_to_frame': True,
+        if isinstance(points, list) and len(points) >= 2:
+            for i in range(len(points) - 1):
+                if isinstance(points[i], dict) and isinstance(points[i+1], dict):
+                    if 'x' in points[i] and 'y' in points[i] and 'x' in points[i+1] and 'y' in points[i+1]:
+                        # Convert normalized coordinates to pixel coordinates
+                        x1_pixel = points[i]['x'] * w
+                        y1_pixel = points[i]['y'] * h
+                        x2_pixel = points[i+1]['x'] * w
+                        y2_pixel = points[i+1]['y'] * h
+                        
+                        lines[line_id] = {
+                            'x1': x1_pixel,
+                            'y1': y1_pixel,
+                            'x2': x2_pixel,
+                            'y2': y2_pixel,
                             'annotation_type': annotation_key,
-                            'point_index': i
+                            'segment_index': i
                         }
-                        kp_id += 1
+                        line_id += 1
     
-    # Extract line intersections for important field features
-    intersections = extract_line_intersections(annotations, target_size)
-    for intersection in intersections:
-        keypoints[kp_id] = {
-            'x': intersection['x'],
-            'y': intersection['y'],
-            'in_frame': (0 <= intersection['x'] <= w and 0 <= intersection['y'] <= h),
-            'close_to_frame': True,
-            'annotation_type': 'intersection',
-            'point_index': 0
-        }
-        kp_id += 1
-    
-    return keypoints
+    return lines
 
 def extract_line_intersections(annotations, target_size):
     """Extract important line intersections"""
@@ -130,6 +119,80 @@ def line_intersection(line1, line2):
     
     return None
 
+def generate_line_heatmap_gaussian(lines, target_size, sigma=2.0):
+    """Generate Gaussian heatmap on start and end points of lines"""
+    h, w = target_size[1], target_size[0]  # height, width
+    heatmap = np.zeros((h, w), dtype=np.float32)
+    
+    # Create coordinate grids
+    y_coords, x_coords = np.ogrid[:h, :w]
+    
+    for line_data in lines.values():
+        x1, y1 = line_data['x1'], line_data['y1']
+        x2, y2 = line_data['x2'], line_data['y2']
+        
+        # Create Gaussian for start point
+        if 0 <= x1 < w and 0 <= y1 < h:
+            gaussian1 = np.exp(-((x_coords - x1)**2 + (y_coords - y1)**2) / (2 * sigma**2))
+            heatmap = np.maximum(heatmap, gaussian1)
+        
+        # Create Gaussian for end point
+        if 0 <= x2 < w and 0 <= y2 < h:
+            gaussian2 = np.exp(-((x_coords - x2)**2 + (y_coords - y2)**2) / (2 * sigma**2))
+            heatmap = np.maximum(heatmap, gaussian2)
+    
+    return heatmap
+
+def generate_line_heatmap(lines, target_size, line_width=2):
+    """Generate binary heatmap from line segments"""
+    h, w = target_size[1], target_size[0]  # height, width
+    heatmap = np.zeros((h, w), dtype=np.float32)
+    
+    for line_data in lines.values():
+        x1, y1 = int(line_data['x1']), int(line_data['y1'])
+        x2, y2 = int(line_data['x2']), int(line_data['y2'])
+        
+        # Ensure coordinates are within image bounds
+        x1 = max(0, min(w-1, x1))
+        y1 = max(0, min(h-1, y1))
+        x2 = max(0, min(w-1, x2))
+        y2 = max(0, min(h-1, y2))
+        
+        # Draw line using cv2
+        cv2.line(heatmap, (x1, y1), (x2, y2), 1.0, thickness=line_width)
+    
+    return heatmap
+
+def create_heatmap_overlay(image, heatmap_tensor, alpha=0.5):
+    """Create an overlay of heatmap on original image"""
+    # Convert PIL image to numpy array
+    if isinstance(image, Image.Image):
+        image_np = np.array(image)
+    else:
+        image_np = image
+    
+    # Resize image to match heatmap dimensions if needed
+    if image_np.shape[:2] != heatmap_tensor.shape:
+        image_np = cv2.resize(image_np, (heatmap_tensor.shape[1], heatmap_tensor.shape[0]))
+    
+    # Normalize heatmap to 0-1 range
+    heatmap_normalized = (heatmap_tensor - heatmap_tensor.min()) / (heatmap_tensor.max() - heatmap_tensor.min() + 1e-8)
+    
+    # Apply colormap to heatmap (using 'jet' colormap)
+    heatmap_colored = cm.jet(heatmap_normalized)[:, :, :3]  # Remove alpha channel
+    heatmap_colored = (heatmap_colored * 255).astype(np.uint8)
+    
+    # Ensure image is in RGB format
+    if len(image_np.shape) == 3 and image_np.shape[2] == 3:
+        image_rgb = image_np
+    else:
+        image_rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+    
+    # Blend the images
+    overlay = cv2.addWeighted(image_rgb, 1-alpha, heatmap_colored, alpha, 0)
+    
+    return overlay
+
 def process_single_sample(args):
     """Process a single sample and generate heatmap"""
     sample_id, input_dir, output_dir, target_size, sigma, down_ratio = args
@@ -144,44 +207,51 @@ def process_single_sample(args):
         
         # Load data
         image = Image.open(image_path)
+        original_size = image.size
+        
+        # Rescale image to target size if different from original
+        if image.size != target_size:
+            image = image.resize(target_size, Image.Resampling.LANCZOS)
+        
         with open(json_path, 'r') as f:
             annotations = json.load(f)
         
-        # Extract keypoints
-        keypoints = extract_keypoints_from_soccernet_annotations(annotations, target_size)
+        # Extract lines
+        lines = extract_lines_from_soccernet_annotations(annotations, target_size)
         
-        if len(keypoints) == 0:
-            return False, f"No keypoints extracted for {sample_id}"
-        
-        # Generate heatmaps at full resolution (no downsampling)
-        num_channels = 58  # Standard number of channels
-        heatmap_tensor = generate_gaussian_array_vectorized(
-            num_channels, keypoints, target_size,
-            down_ratio=1, sigma=sigma  # down_ratio=1 means same resolution as input
-        )
-        
+        if len(lines) == 0:
+            return False, f"No lines extracted for {sample_id}"
+        # import pdb; pdb.set_trace()
+        # Generate Gaussian line heatmap
+        heatmap_tensor = generate_line_heatmap_gaussian(lines, target_size, sigma=sigma)
+        # import pdb; pdb.set_trace()
         # Save heatmap
         heatmap_path = os.path.join(output_dir, f"{sample_id}_heatmap.npz")
         # np.save(heatmap_path, heatmap_tensor)
         np.savez_compressed(heatmap_path, heatmap_tensor)
+        
+        # Create and save heatmap overlay
+        overlay_image = create_heatmap_overlay(image, heatmap_tensor, alpha=0.4)
+        overlay_path = os.path.join(output_dir, f"{sample_id}_overlay.jpg")
+        overlay_pil = Image.fromarray(overlay_image)
+        overlay_pil.save(overlay_path, quality=85)
         # Save metadata
         metadata = {
             'sample_id': sample_id,
-            'original_image_size': image.size,
+            'original_image_size': original_size,
             'target_size': target_size,
-            'num_keypoints': len(keypoints),
-            'visible_keypoints': sum(1 for kp in keypoints.values() if kp['in_frame']),
+            'rescaled': original_size != target_size,
+            'num_lines': len(lines),
             'heatmap_shape': heatmap_tensor.shape,
-            'sigma': sigma,
-            'down_ratio': down_ratio,
-            'keypoint_types': list(set(kp['annotation_type'] for kp in keypoints.values()))
+            'line_width': 2,
+            'line_types': list(set(line['annotation_type'] for line in lines.values()))
         }
         
         metadata_path = os.path.join(output_dir, f"{sample_id}_metadata.json")
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
-        return True, f"Processed {sample_id}: {len(keypoints)} keypoints, shape {heatmap_tensor.shape}"
+        return True, f"Processed {sample_id}: {len(lines)} lines, shape {heatmap_tensor.shape}"
         
     except Exception as e:
         return False, f"Error processing {sample_id}: {str(e)}"
@@ -220,7 +290,6 @@ def batch_generate_heatmaps(input_dir, output_dir, split_name, target_size=(960,
     # Process samples
     successful = 0
     failed = 0
-    
     if num_workers > 1:
         # Multiprocessing
         print(f"Using {num_workers} workers for parallel processing...")
