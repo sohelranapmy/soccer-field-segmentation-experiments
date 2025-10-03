@@ -118,7 +118,7 @@ class SoftHeatmapSegmentationDataset(Dataset):
         self.image_files = sorted(
             [f for f in os.listdir(image_dir) if f.lower().endswith(image_extensions)]
         )
-        self.image_files = self.image_files[0:32]  # Limit to first 8 images for testing
+        self.image_files = self.image_files  # Limit to first 8 images for testing
         # self.image_files = sorted(os.listdir(image_dir))
         self.mask_dir = image_dir+"_heatmaps/"
         # import pdb; pdb.set_trace()
@@ -495,7 +495,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # === TensorBoard Setup ===
-    log_dir = 'runs/brighton_soccer_field_segmentation_classwise_absent_panelty_0.7'
+    log_dir = 'runs/brighton_soccer_field_segmentation_classwise_absent_panelty_0.5'
     writer = SummaryWriter(log_dir)
     print(f"📊 TensorBoard logs will be saved to: {log_dir}")
     print(f"🚀 Start TensorBoard with: tensorboard --logdir={log_dir}")
@@ -510,8 +510,8 @@ def main():
     # === Data paths ===
     train_image_dir = '/home/training-machine/Documents/brighton-project/soccer-field-segmentation-experiments/brighton_data/train_rescaled_images'
     train_mask_dir = '/home/training-machine/Documents/brighton-project/soccer-field-segmentation-experiments/brighton_data/train_rescaled_images_heatmaps'
-    val_image_dir = '/home/training-machine/Documents/brighton-project/soccer-field-segmentation-experiments/brighton_data/train_rescaled_images'
-    val_mask_dir = '/home/training-machine/Documents/brighton-project/soccer-field-segmentation-experiments/brighton_data/train_rescaled_images_heatmaps'
+    val_image_dir = '/home/training-machine/Documents/brighton-project/soccer-field-segmentation-experiments/brighton_data/valid_rescaled_images'
+    val_mask_dir = '/home/training-machine/Documents/brighton-project/soccer-field-segmentation-experiments/brighton_data/valid_rescaled_images_heatmaps'
 
     # === Dataset and DataLoader ===
     train_dataset = SoftHeatmapSegmentationDataset(train_image_dir, transform=transform)
@@ -523,7 +523,7 @@ def main():
     # === Model, Loss, Optimizer ===
     model = HRNetSegmentation(num_classes=num_classes).to(device)
     # model = TinySegmentationModel(num_classes=num_classes).to(device)
-    criterion = ImprovedJointsMSELoss(use_target_weight=True, absent_penalty=0.70, combined_weight=2.0)
+    criterion = ImprovedJointsMSELoss(use_target_weight=True, absent_penalty=0.50, combined_weight=2.0)
     # criterion = JointsMSELoss(use_target_weight=True)  # Original loss for comparison
     # criterion = nn.BCEWithLogitsLoss()
     # optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -556,6 +556,9 @@ def main():
         
         print(f"📉 Train Loss: {train_loss:.8f} | 🧪 Val Loss: {val_loss:.8f} | 📈 LR: {current_lr:.2e}")
 
+        # Save latest model weights every epoch
+        torch.save(model.state_dict(), "hrnet_latest_model.pth")
+        
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss

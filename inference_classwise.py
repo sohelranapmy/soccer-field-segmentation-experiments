@@ -130,21 +130,29 @@ class KeypointInference:
         
         return keypoints
     
-    def determine_keypoint_classes(self, keypoints, classwise_heatmaps, search_radius=3, 
+    def determine_keypoint_classes(self, keypoints, classwise_heatmaps, search_radius=5, 
                                   prevent_duplicates=True):
         """
         Determine class for each detected keypoint by checking individual class heatmaps
+        Uses maxpool2d for more efficient and robust peak detection within search regions
         Args:
             keypoints: List of keypoint locations [(x, y, confidence), ...]
             classwise_heatmaps: Individual class heatmaps (C, H, W) - excluding combined channel
             search_radius: Radius to search around keypoint location
             prevent_duplicates: Whether to prevent multiple detections of same class
         Returns:
-            List of classified keypoints [(x, y, confidence, class_id, class_confidence), ...]
+            Tuple of (classified_keypoints, unclassified_keypoints, used_classes)
+            classified_keypoints: [(x, y, confidence, class_id, class_confidence), ...]
+            unclassified_keypoints: [(x, y, confidence), ...]
+            used_classes: set of class IDs that have been assigned
         """
         classified_keypoints = []
+        unclassified_keypoints = []
         num_classes = classwise_heatmaps.shape[0] - 1  # Exclude background class
         used_classes = set()  # Track which classes have been assigned
+        
+        # Convert heatmaps to tensor for maxpool operations
+        heatmaps_tensor = torch.from_numpy(classwise_heatmaps).unsqueeze(0)  # Add batch dimension
         
         # Sort keypoints by combined confidence (process highest confidence first)
         sorted_keypoints = sorted(keypoints, key=lambda x: x[2], reverse=True)
@@ -159,6 +167,14 @@ class KeypointInference:
             x_min = max(0, x - search_radius)
             x_max = min(classwise_heatmaps.shape[2], x + search_radius + 1)
             
+            # Calculate region size for maxpool
+            region_h = y_max - y_min
+            region_w = x_max - x_min
+            
+            if region_h <= 0 or region_w <= 0:
+                unclassified_keypoints.append((x, y, combined_conf))
+                continue
+                
             best_class_id = -1
             best_class_conf = 0.0
             
@@ -170,10 +186,13 @@ class KeypointInference:
                 if prevent_duplicates and keypoint_id in used_classes:
                     continue
                 
-                # Get maximum confidence in the search region for this class
-                region = classwise_heatmaps[class_id, y_min:y_max, x_min:x_max]
-                if region.size > 0:
-                    max_conf = np.max(region)
+                # Extract region for this class
+                class_region = heatmaps_tensor[0, class_id, y_min:y_max, x_min:x_max]
+                
+                if class_region.numel() > 0:
+                    # Simply get the maximum value in the region since each heatmap has only one class
+                    max_conf = class_region.max().item()
+                    
                     if max_conf > best_class_conf:
                         best_class_conf = max_conf
                         best_class_id = keypoint_id
@@ -182,11 +201,82 @@ class KeypointInference:
                 classified_keypoints.append((x, y, combined_conf, best_class_id, best_class_conf))
                 if prevent_duplicates:
                     used_classes.add(best_class_id)
+            else:
+                unclassified_keypoints.append((x, y, combined_conf))
         
-        return classified_keypoints
+        return classified_keypoints, unclassified_keypoints, used_classes
+    
+    def assign_remaining_keypoints(self, unclassified_keypoints, classwise_heatmaps, used_classes, 
+                                 search_radius=5, num_classes=32):
+        """
+        Assign unclassified keypoints to remaining classes after initial high-confidence assignment
+        Args:
+            unclassified_keypoints: List of unclassified keypoints [(x, y, confidence), ...]
+            classwise_heatmaps: Individual class heatmaps (C, H, W)
+            used_classes: Set of class IDs already assigned
+            search_radius: Radius to search around keypoint location
+            num_classes: Total number of keypoint classes (32)
+        Returns:
+            List of newly classified keypoints [(x, y, confidence, class_id, class_confidence), ...]
+        """
+        remaining_keypoints = []
+        available_classes = set(range(num_classes)) - used_classes
+        
+        if not available_classes or not unclassified_keypoints:
+            return remaining_keypoints
+        
+        # Convert heatmaps to tensor for operations
+        heatmaps_tensor = torch.from_numpy(classwise_heatmaps).unsqueeze(0)
+        
+        # Sort unclassified keypoints by detection confidence (highest first)
+        sorted_unclassified = sorted(unclassified_keypoints, key=lambda x: x[2], reverse=True)
+        
+        # Track which classes get assigned in this round
+        newly_used_classes = set()
+        
+        for x, y, combined_conf in sorted_unclassified:
+            x, y = int(x), int(y)
+            
+            # Search region around keypoint
+            y_min = max(0, y - search_radius)
+            y_max = min(classwise_heatmaps.shape[1], y + search_radius + 1)
+            x_min = max(0, x - search_radius)
+            x_max = min(classwise_heatmaps.shape[2], x + search_radius + 1)
+            
+            region_h = y_max - y_min
+            region_w = x_max - x_min
+            
+            if region_h <= 0 or region_w <= 0:
+                continue
+            
+            best_class_id = -1
+            best_class_conf = 0.0
+            
+            # Check only available classes
+            for keypoint_id in available_classes:
+                if keypoint_id in newly_used_classes:
+                    continue
+                    
+                class_id = keypoint_id + 1  # Convert to 1-33 range for heatmap indexing
+                
+                # Extract region for this class
+                class_region = heatmaps_tensor[0, class_id, y_min:y_max, x_min:x_max]
+                
+                if class_region.numel() > 0:
+                    max_conf = class_region.max().item()
+                    
+                    if max_conf > best_class_conf:
+                        best_class_conf = max_conf
+                        best_class_id = keypoint_id
+            
+            if best_class_id >= 0:
+                remaining_keypoints.append((x, y, combined_conf, best_class_id, best_class_conf))
+                newly_used_classes.add(best_class_id)
+        
+        return remaining_keypoints
     
     def predict(self, image, detection_threshold=0.3, classification_threshold=0.2, 
-               min_distance=10, search_radius=3, prevent_duplicate_classes=True, max_keypoints=20):
+               min_distance=10, search_radius=5, prevent_duplicate_classes=True, max_keypoints=20):
         """
         Run full inference pipeline on an image
         Args:
@@ -206,6 +296,26 @@ class KeypointInference:
             outputs = self.model(image_tensor.to(self.device))
             outputs = outputs.cpu().numpy()[0]  # Remove batch dimension
         
+        # Rescale outputs to match original image coordinates
+        # Network outputs at 1/4 scale, so rescale dimensions by 4x
+        target_output_h = original_size[1] // 4  # Quarter of original height
+        target_output_w = original_size[0] // 4  # Quarter of original width
+        
+        # print(f"Original size: {original_size}")
+        # print(f"Target output size: {target_output_w}x{target_output_h}")
+        # print(f"Actual output size: {outputs.shape[2]}x{outputs.shape[1]}")
+        
+        # Resize outputs to target dimensions using interpolation
+        # This handles any padding/cropping issues by direct rescaling
+        resized_outputs = []
+        for i in range(outputs.shape[0]):
+            resized_channel = cv2.resize(outputs[i], (target_output_w, target_output_h), 
+                                       interpolation=cv2.INTER_LINEAR)
+            resized_outputs.append(resized_channel)
+        outputs = np.stack(resized_outputs, axis=0)
+        
+        # print(f"After rescaling: {outputs.shape[2]}x{outputs.shape[1]}")
+
         # Split outputs into classwise heatmaps and combined heatmap
         classwise_heatmaps = outputs[:-1]  # First 33 channels (background + 32 keypoint classes)
         combined_heatmap = outputs[-1]     # Last channel (combined keypoints)
@@ -216,25 +326,48 @@ class KeypointInference:
             max_keypoints=max_keypoints
         )
         
-        # Step 2: Determine classes for detected keypoints
-        classified_keypoints = self.determine_keypoint_classes(
+        # Step 2: Determine classes for detected keypoints (first stage - high confidence)
+        classified_keypoints, unclassified_keypoints, used_classes = self.determine_keypoint_classes(
             detected_keypoints, classwise_heatmaps, search_radius=search_radius,
             prevent_duplicates=prevent_duplicate_classes
         )
         
-        # Filter by classification confidence
-        classified_keypoints = [
+        # Filter by classification confidence (first stage)
+        high_conf_keypoints = [
             kp for kp in classified_keypoints if kp[4] >= classification_threshold
         ]
         
+        # Update used classes based on high confidence assignments
+        final_used_classes = set()
+        for kp in high_conf_keypoints:
+            final_used_classes.add(kp[3])  # kp[3] is class_id
+        
+        # Step 3: Assign remaining detections to unused classes (second stage - any confidence)
+        remaining_keypoints = self.assign_remaining_keypoints(
+            unclassified_keypoints, classwise_heatmaps, final_used_classes,
+            search_radius=search_radius, num_classes=32
+        )
+        
+        # Combine high confidence and remaining assignments
+        classified_keypoints = high_conf_keypoints + remaining_keypoints
+        
+        # Calculate automatic heatmap offset based on preprocessing padding
+        # The padding at half-resolution gets scaled by 4x (2x from resize + 2x from network)
+        pad_h, pad_w = padding
+        automatic_offset = pad_h * 2  # Scale padding from half-res to full-res
+        
         # Scale keypoints back to original image coordinates
-        scale_x = original_size[0] / combined_heatmap.shape[1]
-        scale_y = original_size[1] / combined_heatmap.shape[0]
+        # Since we rescaled to exactly 1/4 of original size, scaling factor is exactly 4.0
+        scale_x = 4.0
+        scale_y = 4.0
+        # print(f"Scaling factors: x={scale_x:.3f}, y={scale_y:.3f}")
+        # print(f"Heatmap shape: {combined_heatmap.shape}")
+        # print(f"Applying automatic offset: {automatic_offset} pixels to keypoints")
         
         scaled_keypoints = []
         for x, y, det_conf, class_id, class_conf in classified_keypoints:
             scaled_x = x * scale_x
-            scaled_y = y * scale_y
+            scaled_y = y * scale_y - automatic_offset  # Apply offset correction to y-coordinate
             scaled_keypoints.append({
                 'x': scaled_x,
                 'y': scaled_y,
@@ -252,6 +385,7 @@ class KeypointInference:
             'original_size': original_size,
             'heatmap_size': combined_heatmap.shape,
             'num_detected': len(scaled_keypoints),
+            'automatic_heatmap_offset': automatic_offset,
             'detection_params': {
                 'detection_threshold': detection_threshold,
                 'classification_threshold': classification_threshold,
@@ -313,12 +447,22 @@ class KeypointInference:
             # Plot 3: Overlay of original image with combined heatmap
             axes[2].imshow(image_np)
             
-            # Resize heatmap to match original image
+            # Create properly aligned heatmap overlay with offset padding
             original_size = results['original_size']
+            heatmap_shape = combined_heatmap.shape
+            
+            # Since we rescaled to exactly 1/4 of original, simply resize by 4x
             resized_heatmap = cv2.resize(combined_heatmap, original_size, interpolation=cv2.INTER_LINEAR)
             
-            im3 = axes[2].imshow(resized_heatmap, cmap='hot', alpha=0.4)
-            axes[2].set_title('Image + Combined Heatmap Overlay')
+            # Use automatic offset based on preprocessing padding
+            offset_pixels = results.get('automatic_heatmap_offset', 0)
+            print(f"Using heatmap offset: {offset_pixels} pixels")
+            padded_heatmap = np.zeros_like(resized_heatmap)
+            if offset_pixels < resized_heatmap.shape[0]:
+                padded_heatmap[:-offset_pixels, :] = resized_heatmap[offset_pixels:, :]
+            
+            im3 = axes[2].imshow(padded_heatmap, cmap='hot', alpha=0.4)
+            axes[2].set_title(f'Image + Heatmap Overlay (Offset: {offset_pixels}px up)')
             axes[2].axis('off')
         
         plt.tight_layout()
@@ -391,14 +535,14 @@ class KeypointInference:
         # Apply colormap
         colored = cv2.applyColorMap(normalized, colormap)
         
-        # Resize to target size
+        # Resize to target size using linear interpolation for better quality
         if colored.shape[:2][::-1] != target_size:  # OpenCV uses (width, height), numpy uses (height, width)
             colored = cv2.resize(colored, target_size, interpolation=cv2.INTER_LINEAR)
         
         return colored
     
     def create_combined_frame(self, frame, heatmap, keypoints, layout='bottom', 
-                             heatmap_alpha=0.7, draw_confidence=True):
+                             heatmap_alpha=0.7, draw_confidence=True, results=None):
         """
         Create a combined frame with original video and heatmap visualization
         Args:
@@ -416,10 +560,17 @@ class KeypointInference:
         h, w = frame.shape[:2]
         
         if layout == 'overlay':
-            # Overlay heatmap directly on the frame
+            # Overlay heatmap directly on the frame with proper alignment and offset
             heatmap_colored = self.create_heatmap_visualization(heatmap, (w, h))
+            
+            # Use automatic offset based on preprocessing padding
+            offset_pixels = results.get('automatic_heatmap_offset', 0) if results else 0
+            padded_heatmap = np.zeros_like(heatmap_colored)
+            if offset_pixels < heatmap_colored.shape[0]:
+                padded_heatmap[:-offset_pixels, :] = heatmap_colored[offset_pixels:, :]
+            
             combined_frame = cv2.addWeighted(frame_with_keypoints, 1 - heatmap_alpha, 
-                                           heatmap_colored, heatmap_alpha, 0)
+                                           padded_heatmap, heatmap_alpha, 0)
             
         elif layout == 'bottom':
             # Place heatmap at bottom (split screen vertically)
@@ -555,7 +706,8 @@ class KeypointInference:
             if show_heatmap:
                 output_frame = self.create_combined_frame(
                     frame, results['combined_heatmap'], results['keypoints'],
-                    layout=heatmap_layout, heatmap_alpha=heatmap_alpha
+                    layout=heatmap_layout, heatmap_alpha=heatmap_alpha, draw_confidence=True,
+                    results=results
                 )
             else:
                 output_frame = self.draw_keypoints_on_frame(frame, results['keypoints'])
@@ -606,7 +758,7 @@ def main():
                        help='Minimum confidence for class assignment')
     parser.add_argument('--min_distance', type=int, default=10,
                        help='Minimum distance between detected keypoints')
-    parser.add_argument('--search_radius', type=int, default=3,
+    parser.add_argument('--search_radius', type=int, default=5,
                        help='Search radius for class determination')
     parser.add_argument('--allow_duplicate_classes', action='store_true', 
                        help='Allow multiple detections of the same keypoint class')

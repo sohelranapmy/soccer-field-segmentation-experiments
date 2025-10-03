@@ -115,7 +115,7 @@ Download the [TS-WorldCup](https://cgv.cs.nthu.edu.tw/KpSFR_data/TS-WorldCup.zip
     Generate keypoints heatmaps using following command:
 
     ```shell
-    python generate_brighton_classwise_heatmaps.py --sigma 5 --sigma 6.0 --rescale_size 960x540
+    python generate_brighton_classwise_heatmaps.py -sigma 6.0 --rescale_size 960x540
     ```
     It will produce [train,test,valid]_rescaled_images and [train,test,valid]_rescaled_images_heatmaps folders
 
@@ -134,8 +134,8 @@ Download the [TS-WorldCup](https://cgv.cs.nthu.edu.tw/KpSFR_data/TS-WorldCup.zip
         --input_path /home/training-machine/Documents/brighton-project/video-intelligence/memory/video/input/test_2.mp4 \ 
         --max_frames 1000 \
         --fps_limit 1 \
-        --detection_threshold 0.05 \
-        --classification_threshold 0.01 \
+        --detection_threshold 0.30 \
+        --classification_threshold 0.30 \
         --show_heatmap \
         --heatmap_layout bottom \
         --output_dir test_overlay
